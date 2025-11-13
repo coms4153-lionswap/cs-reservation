@@ -12,6 +12,9 @@ from fastapi import FastAPI, HTTPException
 from fastapi import Query, Path, Header, Depends
 from typing import Optional
 
+from sqlalchemy import text
+from database import engine
+
 from models.reservation import ReservationCreate, ReservationRead, ReservationUpdate
 
 port = int(os.environ.get("FASTAPIPORT", 8000))
@@ -26,6 +29,15 @@ app = FastAPI(
     description="Demo FastAPI app using Pydantic v2 models for Reservation",
     version="0.1.0",
 )
+
+# ============================================================
+# Health check
+# ============================================================
+@app.get("/health/db")
+def health_check():
+    with engine.connect() as conn:
+        result = conn.execute(text("SELECT 1"))
+        return {"db_ok": result.scalar() == 1}
 
 # -----------------------------------------------------------------------------
 # Config / helpers
