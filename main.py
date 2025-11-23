@@ -42,7 +42,7 @@ def health_check():
 # -----------------------------------------------------------------------------
 # Config / helpers
 # -----------------------------------------------------------------------------
-CATALOG_URL = "https://catalog.example.com"  # replace with real URL
+CATALOG_URL = "http://34.23.89.206"  # replace with real URL
 HOLD_TTL_HOURS = 72
 
 def now_utc() -> datetime:
