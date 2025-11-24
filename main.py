@@ -151,7 +151,7 @@ def create_reservation(
     etag = x_item_etag or cat["etag"]
     item_status = cat["body"].get("status")
 
-    if item_status not in ("available", "reserved"):
+    if item_status not in ("available"):
         # Already sold/withdrawn
         raise HTTPException(status_code=409, detail=f"Item not reservable (status={item_status})")
 
