@@ -68,22 +68,69 @@ def catalog_get_item(item_id: int) -> dict:
     return {"etag": resp.headers.get("ETag"), "body": resp.json()}
 
 def catalog_set_status(item_id: int, etag: Optional[str], from_status: str, to_status: str):
-    # PATCH /items/{id}/status with If-Match and from→to
+    """
+    Change an item's status from `from_status` → `to_status` using:
+      - GET /items/{id}  (via catalog_get_item)
+      - PUT /items/{id}  (full resource with updated status)
+
+    If `etag` is provided, we enforce it via If-Match to detect concurrent updates.
+    """
+
+    # 1) Fetch current item (full resource + latest ETag)
+    current = catalog_get_item(item_id)
+    current_etag = current["etag"]
+    body = current["body"]
+
+    # 2) Check that the current status matches what the caller expects
+    current_status = body.get("status")
+    if current_status != from_status:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Item status is '{current_status}', expected '{from_status}'",
+        )
+
+    # 3) Optional extra concurrency check: if caller passed an ETag, compare it
+    if etag is not None and current_etag is not None and etag != current_etag:
+        raise HTTPException(
+            status_code=409,
+            detail="Item ETag mismatch (possible concurrent modification)",
+        )
+
+    # 4) Build full payload with only status changed
+    #    (Assumes schema: name, description, price, category, status)
+    payload = {
+        "name": body["name"],
+        "description": body["description"],
+        "price": body["price"],
+        "category": body["category"],
+        "status": to_status,
+    }
+
     headers = {}
-    if etag:
-        headers["If-Match"] = etag
-    payload = {"from": from_status, "to": to_status, "reason": "RESERVATION_FLOW"}
+    # Use the latest ETag we just saw from GET for If-Match
+    if current_etag:
+        headers["If-Match"] = current_etag
+
+    # 5) PUT updated item
     try:
-        resp = httpx.patch(f"{CATALOG_URL}/items/{item_id}/status",
-                            headers=headers, json=payload, timeout=5.0)
+        resp = httpx.put(
+            f"{CATALOG_URL}/items/{item_id}",
+            headers=headers,
+            json=payload,
+            timeout=5.0,
+        )
     except httpx.RequestError as e:
         raise HTTPException(status_code=502, detail=f"Catalog unreachable: {e}") from e
+
     if resp.status_code in (409, 412):
-        # Precondition failed / conflict → someone else changed it
+        # Conflict / precondition failed → someone else updated it between GET and PUT
         raise HTTPException(status_code=409, detail="Item status changed concurrently")
+
     if resp.is_error:
         raise HTTPException(status_code=502, detail=f"Catalog error: {resp.text}")
+
     return resp.json() if resp.content else None
+
 
 # -----------------------------------------------------------------------------
 # Reservations endpoints
