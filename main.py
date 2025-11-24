@@ -17,7 +17,7 @@ from database import engine
 
 from models.reservation import ReservationCreate, ReservationRead, ReservationUpdate
 
-port = int(os.environ.get("FASTAPIPORT", 8000))
+port = int(os.environ.get("PORT", 8000))
 
 # -----------------------------------------------------------------------------
 # Fake in-memory "databases"
