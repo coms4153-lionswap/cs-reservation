@@ -172,16 +172,43 @@ def create_reservation(
     expires = now + timedelta(hours=HOLD_TTL_HOURS)
     
 
-    record = ReservationRead(
-        reservation_id=rid,
-        item_id=item_id,
-        buyer_id=user_id,
-        status=status,
-        hold_expires_at=expires,
-        updated_at=now,
-    )
-    reservations[rid] = record
-    return record
+    with engine.begin() as conn:
+        # Insert row
+        insert_stmt = text("""
+            INSERT INTO reservations (
+                reservation_id, item_id, buyer_id, status, hold_expires_at, updated_at
+            )
+            VALUES (
+                :reservation_id, :item_id, :buyer_id, :status, :hold_expires_at, :updated_at
+            )
+        """)
+        conn.execute(
+            insert_stmt,
+            {
+                "reservation_id": str(rid),
+                "item_id": item_id,
+                "buyer_id": user_id,
+                "status": status,
+                "hold_expires_at": expires,
+                "updated_at": now,
+            },
+        )
+
+        # Fetch the row we just inserted
+        select_stmt = text("""
+            SELECT reservation_id, item_id, buyer_id, status, hold_expires_at, updated_at
+            FROM reservations
+            WHERE reservation_id = :reservation_id
+        """)
+        row = conn.execute(
+            select_stmt, {"reservation_id": str(rid)}
+        ).mappings().first()
+
+    if not row:
+        raise HTTPException(status_code=500, detail="Failed to create reservation")
+
+    # 3) Let Pydantic do the parsing — passing a dict is enough
+    return ReservationRead(**row)
 
 @app.get("/reservations", response_model=List[ReservationRead], summary="List reservations")
 def list_reservations(
@@ -190,66 +217,157 @@ def list_reservations(
     buyer_id: Optional[int] = Query(None),
     status_q: Optional[str] = Query(None, alias="status"),
 ):
-    results = list(reservations.values())
+    query = """
+        SELECT reservation_id, item_id, buyer_id, status, hold_expires_at, updated_at
+        FROM reservations
+        WHERE 1=1
+    """
+    params = {}
+
     if reservation_id is not None:
-        results = [r for r in results if r.reservation_id == reservation_id]
+        query += " AND reservation_id = :reservation_id"
+        params["reservation_id"] = str(reservation_id)
     if item_id is not None:
-        results = [r for r in results if r.item_id == item_id]
+        query += " AND item_id = :item_id"
+        params["item_id"] = item_id
     if buyer_id is not None:
-        results = [r for r in results if r.buyer_id == buyer_id]
+        query += " AND buyer_id = :buyer_id"
+        params["buyer_id"] = buyer_id
     if status_q is not None:
-        results = [r for r in results if r.status == status_q]
-    return results
+        query += " AND status = :status"
+        params["status"] = status_q
+
+    with engine.connect() as conn:
+        rows = conn.execute(text(query), params).mappings().all()
+
+    return [ReservationRead(**row) for row in rows]
 
 @app.get("/reservations/{reservation_id}", response_model=ReservationRead, summary="Get reservation by ID")
 def get_reservation(reservation_id: UUID):
-    rec = reservations.get(reservation_id)
-    if not rec:
+    with engine.connect() as conn:
+        row = conn.execute(
+            text("""
+                SELECT reservation_id, item_id, buyer_id, status, hold_expires_at, updated_at
+                FROM reservations
+                WHERE reservation_id = :reservation_id
+            """),
+            {"reservation_id": str(reservation_id)},
+        ).mappings().first()
+
+    if not row:
         raise HTTPException(status_code=404, detail="Reservation not found")
-    return rec
+    return ReservationRead(**row)
 
 @app.patch("/reservations/{reservation_id}", response_model=ReservationRead, summary="Update reservation status")
-def update_reservation(reservation_id: UUID, update: ReservationUpdate, user_id: int = Depends(current_user_id)):
-    rec = reservations.get(reservation_id)
-    if not rec:
-        raise HTTPException(status_code=404, detail="Reservation not found")
+def update_reservation(
+    reservation_id: UUID,
+    update: ReservationUpdate,
+    user_id: int = Depends(current_user_id),
+):
+    # 1) Load existing reservation from DB
+    with engine.begin() as conn:
+        select_stmt = text("""
+            SELECT reservation_id, item_id, buyer_id, status, hold_expires_at, updated_at
+            FROM reservations
+            WHERE reservation_id = :reservation_id
+        """)
+        row = conn.execute(
+            select_stmt,
+            {"reservation_id": str(reservation_id)},
+        ).mappings().first()
 
-    if rec.status != "ACTIVE":
-        raise HTTPException(status_code=409, detail=f"Reservation not Active (current={rec.status})")
+        if not row:
+            raise HTTPException(status_code=404, detail="Reservation not found")
 
-    # Optionally, attempt to relist the item in Catalog if it's still Reserved
-    try:
-        cat = catalog_get_item(rec.item_id)
-        if cat["body"].get("status") == "available":
-            catalog_set_status(rec.item_id, cat["etag"], from_status="available", to_status="reserved")
-        elif cat["body"].get("status") == "reserved":
-            catalog_set_status(rec.item_id, cat["etag"], from_status="reserved", to_status="available")
-    except HTTPException:
-        # If Catalog call fails, we still let user mark Inactive (decouple UX);
-        # you may enqueue a retry instead of swallowing.
-        pass
+        if row["status"] != "ACTIVE":
+            raise HTTPException(
+                status_code=409,
+                detail=f"Reservation not Active (current={row['status']})",
+            )
 
-    rec.status = "INACTIVE"
-    rec.updated_at = now_utc()
-    reservations[reservation_id] = rec
-    return rec
+        # 2) Optionally, attempt to relist the item in Catalog if it's still Reserved
+        try:
+            cat = catalog_get_item(row["item_id"])
+            cat_status = cat["body"].get("status")
+            if cat_status == "available":
+                catalog_set_status(row["item_id"], cat["etag"], from_status="available", to_status="reserved")
+            elif cat_status == "reserved":
+                catalog_set_status(row["item_id"], cat["etag"], from_status="reserved", to_status="available")
+        except HTTPException:
+            # If Catalog call fails, we still let user mark Inactive (decouple UX);
+            # you may enqueue a retry instead of swallowing.
+            pass
+
+        # 3) Update reservation status in DB
+        new_status = "INACTIVE"  # keep old behavior, ignore update.status value
+        now = now_utc()
+
+        update_stmt = text("""
+            UPDATE reservations
+            SET status = :status,
+                updated_at = :updated_at
+            WHERE reservation_id = :reservation_id
+        """)
+        conn.execute(
+            update_stmt,
+            {
+                "status": new_status,
+                "updated_at": now,
+                "reservation_id": str(reservation_id),
+            },
+        )
+
+        # 4) Fetch updated row
+        updated_row = conn.execute(
+            select_stmt,
+            {"reservation_id": str(reservation_id)},
+        ).mappings().first()
+
+    if not updated_row:
+        raise HTTPException(status_code=500, detail="Failed to update reservation")
+
+    return ReservationRead(**updated_row)
 
 @app.delete("/reservations/{reservation_id}", status_code=200, summary="Delete reservation (cancel & relist)")
-def delete_reservation(reservation_id: UUID, user_id: int = Depends(current_user_id)):
-    rec = reservations.get(reservation_id)
-    if not rec:
-        raise HTTPException(status_code=404, detail="Reservation not found")
+def delete_reservation(
+    reservation_id: UUID,
+    user_id: int = Depends(current_user_id),
+):
+    with engine.begin() as conn:
+        # 1) Load existing reservation
+        select_stmt = text("""
+            SELECT reservation_id, item_id, buyer_id, status, hold_expires_at, updated_at
+            FROM reservations
+            WHERE reservation_id = :reservation_id
+        """)
+        row = conn.execute(
+            select_stmt,
+            {"reservation_id": str(reservation_id)},
+        ).mappings().first()
 
-    # Best-effort: relist in Catalog if still Reserved
-    try:
-        cat = catalog_get_item(rec.item_id)
-        if cat["body"].get("status") == "reserved":
-            catalog_set_status(rec.item_id, cat["etag"], from_status="reserved", to_status="available")
-    except HTTPException:
-        # Consider logging/enqueue retry
-        pass
+        if not row:
+            raise HTTPException(status_code=404, detail="Reservation not found")
 
-    del reservations[reservation_id]
+        # 2) Best-effort: relist in Catalog if still Reserved
+        try:
+            cat = catalog_get_item(row["item_id"])
+            cat_status = cat["body"].get("status")
+            if cat_status == "reserved":
+                catalog_set_status(row["item_id"], cat["etag"], from_status="reserved", to_status="available")
+        except HTTPException:
+            # Consider logging/enqueue retry
+            pass
+
+        # 3) Delete from DB
+        delete_stmt = text("""
+            DELETE FROM reservations
+            WHERE reservation_id = :reservation_id
+        """)
+        conn.execute(
+            delete_stmt,
+            {"reservation_id": str(reservation_id)},
+        )
+
     return {"message": f"Reservation {reservation_id} deleted"}
 
 # -----------------------------------------------------------------------------
