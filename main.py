@@ -5,11 +5,13 @@ import socket
 from datetime import datetime, timezone, timedelta
 import httpx
 
+
 from typing import Dict, List
 from uuid import UUID, uuid4
 
 from fastapi import FastAPI, HTTPException
 from fastapi import Query, Path, Header, Depends
+from fastapi.middleware.cors import CORSMiddleware
 from typing import Optional
 
 from sqlalchemy import text
@@ -22,12 +24,20 @@ port = int(os.environ.get("PORT", 8000))
 # -----------------------------------------------------------------------------
 # Fake in-memory "databases"
 # -----------------------------------------------------------------------------
-reservations: Dict[UUID, ReservationRead] = {}
 
 app = FastAPI(
     title="Reservation Service API",
     description="Demo FastAPI app using Pydantic v2 models for Reservation",
     version="0.1.0",
+)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+    expose_headers=["ETag", "Location", "Content-Type"],  
 )
 
 # ============================================================
