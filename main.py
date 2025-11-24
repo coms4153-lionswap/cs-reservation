@@ -99,19 +99,19 @@ def create_reservation(
     user_id: int = Depends(current_user_id),
     x_item_etag: Optional[str] = Header(None, description="Optional ETag from prior GET /items/{id}"),
 ):
-    # 1) Consult Catalog: verify item & flip Listed→Reserved using ETag if available
+    # 1) Consult Catalog: verify item & flip Available→Reserved using ETag if available
     cat = catalog_get_item(item_id)
     etag = x_item_etag or cat["etag"]
     item_status = cat["body"].get("status")
 
-    if item_status not in ("Listed", "Reserved"):
+    if item_status not in ("available", "reserved"):
         # Already sold/withdrawn
         raise HTTPException(status_code=409, detail=f"Item not reservable (status={item_status})")
 
-    if item_status == "Listed":
+    if item_status == "available":
         # Attempt to reserve
         try:
-            catalog_set_status(item_id, etag, from_status="Listed", to_status="Reserved")
+            catalog_set_status(item_id, etag, from_status="available", to_status="reserved")
         except HTTPException as e:
             # If conflict, surface a clean message
             if e.status_code == 409:
@@ -173,10 +173,10 @@ def update_reservation(reservation_id: UUID, update: ReservationUpdate, user_id:
     # Optionally, attempt to relist the item in Catalog if it's still Reserved
     try:
         cat = catalog_get_item(rec.item_id)
-        if cat["body"].get("status") == "Listed":
-            catalog_set_status(rec.item_id, cat["etag"], from_status="Listed", to_status="Reserved")
-        elif cat["body"].get("status") == "Reserved":
-            catalog_set_status(rec.item_id, cat["etag"], from_status="Reserved", to_status="Listed")
+        if cat["body"].get("status") == "available":
+            catalog_set_status(rec.item_id, cat["etag"], from_status="available", to_status="reserved")
+        elif cat["body"].get("status") == "reserved":
+            catalog_set_status(rec.item_id, cat["etag"], from_status="reserved", to_status="available")
     except HTTPException:
         # If Catalog call fails, we still let user mark Inactive (decouple UX);
         # you may enqueue a retry instead of swallowing.
@@ -196,8 +196,8 @@ def delete_reservation(reservation_id: UUID, user_id: int = Depends(current_user
     # Best-effort: relist in Catalog if still Reserved
     try:
         cat = catalog_get_item(rec.item_id)
-        if cat["body"].get("status") == "Reserved":
-            catalog_set_status(rec.item_id, cat["etag"], from_status="Reserved", to_status="Listed")
+        if cat["body"].get("status") == "reserved":
+            catalog_set_status(rec.item_id, cat["etag"], from_status="reserved", to_status="available")
     except HTTPException:
         # Consider logging/enqueue retry
         pass
