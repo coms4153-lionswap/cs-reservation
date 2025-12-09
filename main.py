@@ -89,7 +89,7 @@ def identity_get_user(user_id: int) -> dict:
     GET /users/{uni}
     '''
     try:
-        resp = httpx.get(f"{IDENTITY_URL}/users/{user_id}", timeout=5.0)
+        resp = httpx.get(f"{IDENTITY_URL}/users/by-id/{user_id}", timeout=5.0)
     except httpx.RequestError as e:
         raise HTTPException(status_code=502, detail=f"Identity service unreachable: {e}") from e
 
