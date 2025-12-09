@@ -52,24 +52,9 @@ class ReservationCreate(ReservationBase):
 
 
 class ReservationUpdate(BaseModel):
-    """Payload for updating an existing reservation. 
-    Only the `status` field can be modified (e.g., mark as Inactive)."""
+    """No fields allowed from the client. The server controls the update logic."""
 
-    status: str = Field(
-        ...,
-        description="Updated reservation status. Allowed value: 'Inactive'.",
-        json_schema_extra={"example": "Inactive"},
-    )
-
-    model_config = {
-        "json_schema_extra": {
-            "examples": [
-                {
-                    "status": "Inactive"
-                }
-            ]
-        }
-    }
+    pass
 
 class ReservationRead(ReservationBase):
     updated_at: datetime = Field(

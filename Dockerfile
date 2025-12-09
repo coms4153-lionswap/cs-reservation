@@ -3,7 +3,7 @@ FROM python:3.11-slim
 # Make Python output unbuffered (so logs appear immediately)
 ENV PYTHONUNBUFFERED=1
 
-# Set working directory
+# Set working directory in the container (default dir is root)
 WORKDIR /app
 
 # Install system dependencies (needed for psycopg2 / PostgreSQL, etc.)
@@ -25,3 +25,4 @@ ENV PORT=8080
 # Start FastAPI with Uvicorn
 # We ignore the __main__ block in main.py and start uvicorn directly
 CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8080"]
+
