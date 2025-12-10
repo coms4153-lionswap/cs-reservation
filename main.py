@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import jwt
 import socket
 from datetime import datetime, timezone, timedelta
 import httpx
@@ -9,7 +10,7 @@ import httpx
 from typing import Dict, List
 from uuid import UUID, uuid4
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, Header, HTTPException, status
 from fastapi import Query, Path, Header, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from typing import Optional
@@ -29,7 +30,8 @@ from google.cloud import pubsub_v1
 import json
 
 port = int(os.environ.get("PORT", 8000))
-
+SECRET_KEY = os.getenv("SECRET_KEY")
+ALGORITHM = os.getenv("ALGO")
 logger = logging.getLogger("uvicorn.error")
 
 app = FastAPI(
@@ -75,9 +77,60 @@ topic_path = publisher.topic_path('notification-480719', 'item-reserved')
 def now_utc() -> datetime:
     return datetime.now(timezone.utc)
 
-def current_user_id() -> int:
-    # TODO: extract from JWT (e.g., sub). Stubbed for now.
-    return 11
+def current_user_id(authorization: str = Header(...)) -> int:
+    """
+    Extract the current user id from the JWT access token in the Authorization header.
+
+    Expected header:
+        Authorization: Bearer <accessToken>
+
+    The token is decoded using HS256 and SECRET_KEY, and the `sub` claim is used as user_id.
+    """
+    if not authorization:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Missing Authorization header",
+        )
+
+    parts = authorization.split()
+    if len(parts) != 2 or parts[0].lower() != "bearer":
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid Authorization header format. Expected 'Bearer <token>'.",
+        )
+
+    token = parts[1]
+
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+    except jwt.ExpiredSignatureError:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Token has expired",
+        )
+    except jwt.InvalidTokenError:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid token",
+        )
+
+    user_id = payload.get("user_id")
+    if user_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Token payload missing 'user_id'",
+        )
+
+    # Cast to int if your IDs are integers; otherwise, return as str
+    try:
+        return int(user_id)
+    except (TypeError, ValueError):
+        # If your sub is actually a string UNI or something, just return it
+        # or change the return type annotation to -> str
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Invalid user id in token",
+        )
 
 # -----------------------------------------------------------------------------
 # Catalog client (composite behavior)
@@ -312,6 +365,7 @@ def create_reservation(
     user_id: int = Depends(current_user_id),
     x_item_etag: Optional[str] = Header(None, description="Optional ETag from prior GET /items/{id}"),
 ):
+    
     # 0) Validate user exists in Identity Service
     identity_get_user(user_id)
 
