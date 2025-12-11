@@ -55,7 +55,6 @@ class ReservationCreate(ReservationBase):
 
 class ReservationUpdate(BaseModel):
     """No fields allowed from the client. The server controls the update logic."""
-
     pass
 
 class ReservationRead(ReservationBase):
@@ -74,6 +73,7 @@ class ReservationRead(ReservationBase):
                     "buyer_id": 2,
                     "status": "Active",
                     "hold_expires_at": "2025-11-16T12:00:00Z",
+                    "seller_id": 11,
                     "updated_at": "2025-11-13T09:20:00Z",
                 }
             ]

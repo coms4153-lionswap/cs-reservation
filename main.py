@@ -465,7 +465,6 @@ def create_reservation(
 @app.patch("/reservations/{reservation_id}", response_model=ReservationRead, summary="Update reservation status")
 def update_reservation(
     reservation_id: UUID,
-    update: ReservationUpdate,
     user_id: int = Depends(current_user_id),
 ):
     # 1) Load existing reservation from DB
