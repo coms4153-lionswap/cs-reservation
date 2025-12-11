@@ -31,6 +31,7 @@ class ReservationBase(BaseModel):
         description="Timestamp when this reservation hold expires (ISO 8601 format) (server-generated).",
         json_schema_extra={"example": "2025-11-13T21:30:00Z"},
     )
+    seller_id: Optional[int] = None
 
     model_config = {
         "json_schema_extra": {
@@ -41,6 +42,7 @@ class ReservationBase(BaseModel):
                     "buyer_id": 2,
                     "status": "Active",
                     "hold_expires_at": "2025-11-13T21:30:00Z",
+                    "seller_id": 11,
                 }
             ]
         }

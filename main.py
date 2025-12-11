@@ -336,7 +336,23 @@ def list_reservations(
     with engine.connect() as conn:
         rows = conn.execute(text(query), params).mappings().all()
 
-    return [ReservationRead(**row) for row in rows]
+    # Enrich each reservation with seller_id from catalog
+    enriched_reservations = []
+    for row in rows:
+        reservation_dict = dict(row)
+        
+        # Fetch item details from catalog
+        try:
+            cat = catalog_get_item(row["item_id"])
+            seller_id = cat["body"].get("seller_id")
+            reservation_dict["seller_id"] = seller_id
+            print("seller_id:", seller_id)
+        except HTTPException:
+            reservation_dict["seller_id"] = None
+        
+        enriched_reservations.append(ReservationRead(**reservation_dict))
+
+    return enriched_reservations
 
 @app.get("/reservations/{reservation_id}", response_model=ReservationRead, summary="Get reservation by ID")
 def get_reservation(reservation_id: UUID):
@@ -373,8 +389,8 @@ def create_reservation(
     cat = catalog_get_item(item_id)
     etag = x_item_etag or cat["etag"]
     item_status = cat["body"].get("status")
-    # seller_id = cat["body"].get("seller_id")
-    seller_id = 11
+    seller_id = cat["body"].get("seller_id")
+    # seller_id = 11
 
     if item_status not in ("available"):
         # Already sold/withdrawn
