@@ -29,6 +29,9 @@ import time
 from google.cloud import pubsub_v1
 import json
 
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from fastapi import Security
+
 port = int(os.environ.get("PORT", 8000))
 SECRET_KEY = os.getenv("SECRET_KEY")
 ALGORITHM = os.getenv("ALGO")
@@ -48,6 +51,8 @@ app.add_middleware(
     allow_headers=["*"],
     expose_headers=["ETag", "Location", "Content-Type"],  
 )
+
+security = HTTPBearer()
 
 # ============================================================
 # Health check
@@ -77,7 +82,7 @@ topic_path = publisher.topic_path('notification-480719', 'item-reserved')
 def now_utc() -> datetime:
     return datetime.now(timezone.utc)
 
-def current_user_id(authorization: str = Header(...)) -> int:
+def current_user_id(credentials: HTTPAuthorizationCredentials = Security(security)) -> int:
     """
     Extract the current user id from the JWT access token in the Authorization header.
 
@@ -86,20 +91,24 @@ def current_user_id(authorization: str = Header(...)) -> int:
 
     The token is decoded using HS256 and SECRET_KEY, and the `sub` claim is used as user_id.
     """
-    if not authorization:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Missing Authorization header",
-        )
+    # if not authorization:
+    #     raise HTTPException(
+    #         status_code=status.HTTP_401_UNAUTHORIZED,
+    #         detail="Missing Authorization header",
+    #     )
 
-    parts = authorization.split()
-    if len(parts) != 2 or parts[0].lower() != "bearer":
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid Authorization header format. Expected 'Bearer <token>'.",
-        )
+    # parts = authorization.split()
+    # if len(parts) != 2 or parts[0].lower() != "bearer":
+    #     raise HTTPException(
+    #         status_code=status.HTTP_401_UNAUTHORIZED,
+    #         detail="Invalid Authorization header format. Expected 'Bearer <token>'.",
+    #     )
 
-    token = parts[1]
+    # token = parts[1]
+    token = credentials.credentials
+    # print("TOKEN:", token)
+    # print("SECRET_KEY:", SECRET_KEY)
+    # print("ALGORITHM:", ALGORITHM)
 
     try:
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])

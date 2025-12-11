@@ -1,17 +1,20 @@
 import jwt
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
+import os
+from dotenv import load_dotenv
 
-SECRET_KEY = "LION_SWAP_GOAT_IS_THE_KEY"
-ALGO = "HS256"
+load_dotenv()
+
+SECRET_KEY = os.getenv("SECRET_KEY")
+ALGORITHM = os.getenv("ALGO")
 
 user_id = 11
 
 role = "admin" if user_id == 11 else "user"
 
-now = datetime.utcnow()
-payload = { "user_id": user_id, "role": role, "iat": int(now.timestamp()), "exp": int((now + timedelta(hours=24)).timestamp()),
-}
+now = datetime.now(timezone.utc)
+payload = {"user_id": user_id, "role": role, "iat": int(now.timestamp()), "exp": int((now + timedelta(hours=24)).timestamp())}
 
-token = jwt.encode(payload, SECRET_KEY, algorithm=ALGO)
+token = jwt.encode(payload, SECRET_KEY, algorithm=ALGORITHM)
 
 print(token)
